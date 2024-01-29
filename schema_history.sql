@@ -1,31 +1,21 @@
 CREATE TABLE timesheet_history (
     id INT,
-    employee VARCHAR(200),
+    employee_id SERIAL,
     task VARCHAR(200),
     start_time TIMESTAMP WITHOUT TIME ZONE,
-    end_time TIMESTAMP WITHOUT TIME ZONE
+    end_time TIMESTAMP WITHOUT TIME ZONE,
+    CONSTRAINT employee_id FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
 );
 
-CREATE OR REPLACE FUNCTION checking_intersections_of_employee_timesheets() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION delete_timesheet() RETURNS TRIGGER AS $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM timesheet
-    WHERE employee = NEW.employee
-    AND id <> NEW.id
-    AND end_time IS NULL
-  ) THEN
-    RAISE EXCEPTION 'You cannot add or change a timesheet while there are unfinished tasks for the same employee.';
-  END IF;
-  RETURN NEW;
+  INSERT INTO timesheet_history (id, employee_id, task, start_time, end_time)
+  VALUES (OLD.id, OLD.employee_id, OLD.task, OLD.start_time, OLD.end_time);
+  RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER checking_intersections_of_employee_timesheets_before_insert
-BEFORE INSERT ON timesheet
+CREATE TRIGGER delete_timesheet
+BEFORE DELETE ON timesheet
 FOR EACH ROW
-EXECUTE FUNCTION checking_intersections_of_employee_timesheets();
-
-CREATE TRIGGER checking_intersections_of_employee_timesheets_before_update
-BEFORE UPDATE ON timesheet
-FOR EACH ROW
-EXECUTE FUNCTION checking_intersections_of_employee_timesheets();
+EXECUTE FUNCTION delete_timesheet();

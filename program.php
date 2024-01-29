@@ -35,44 +35,62 @@ class DB
             'timesheet.csv' => 'timesheet'
         ];
         $fieldsForAllTables = [
-            'employees' => ['name', 'position'],
-            'positions' => ['name', 'hourly_rate'],
-            'timesheet' => ['id', 'task', 'employee', 'start_time', 'end_time']
+            'employees' => ['employee_id', 'name', 'position_id'],
+            'positions' => ['position_id', 'name', 'hourly_rate'],
+            'timesheet' => ['id', 'task', 'employee_id', 'start_time', 'end_time']
         ];
 
         if (array_key_exists($filename, $tables)) {
             $table = $tables[$filename];
             $fields = $fieldsForAllTables[$table];
-            $field_list = implode(", ", $fields);
+            $placeholders = implode(", ", $fields);
             $countRecords = 0;
 
             $existingData = $this->getList($table);
+            if ($filename === 'timesheet.csv') $idAndNameEmployees = $this->getIdAndNameEmployees();
 
             foreach ($this->data as $row) {
                 if (!in_array($row, $existingData)) {
-                    if ($filename === 'timesheet.csv') {
-                        foreach ($existingData as $array) {
-                            if ($row[0] === $array[$fields[1]] &&
-                                $row[1] === $array[$fields[2]] &&
-                                $row[2] === $array[$fields[3]] &&
-                                $row[3] === $array[$fields[4]]) {
-                                break 2;
-                            }
-                        }
+                    switch ($filename) {
+                        case 'timesheet.csv':
+                            foreach ($existingData as $array) {
+                                foreach ($idAndNameEmployees as $employee) {
+                                    if ($row[1] == $employee['name']) $row[1] = $employee['employee_id'];
+                                }
 
-                        $id = count($existingData) + $countRecords;
-                        array_unshift($row, $id);
-                    } else {
-                        foreach ($existingData as $array) {
-                            if ($row[0] === $array[$fields[0]] &&
-                                $row[1] === $array[$fields[1]]) {
-                                break 2;
+                                if ($row[0] == $array[$fields[1]] &&
+                                    $row[1] == $array[$fields[2]] &&
+                                    $row[2] == $array[$fields[3]] &&
+                                    $row[3] == $array[$fields[4]]) {
+                                    break 3;
+                                }
                             }
-                        }
+                        case 'positions.csv':
+                            foreach ($existingData as $array) {
+                                if ($row[0] == $array[$fields[1]] &&
+                                    $row[1] == $array[$fields[2]]) {
+                                    break 3;
+                                }
+                            }
+                        case 'employees.csv':
+                            foreach ($existingData as $array) {
+                                if ($row[0] == $array[$fields[1]] &&
+                                    $row[1] == $array[$fields[2]]) {
+                                    break 3;
+                                }
+                            }
+
+                            $stmt = $this->db->prepare("SELECT p.position_id FROM positions p WHERE p.name='$row[1]'");
+                            $stmt->execute();
+                            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                            $row[1] = $data[0]["position_id"];
                     }
 
-                    $placeholders = "'" . implode("', '", $row) . "'";
-                    $stmt = $this->db->prepare("INSERT INTO $table ($field_list) VALUES ($placeholders)");
+                    $id = count($existingData) + $countRecords;
+                    array_unshift($row, $id);
+
+                    $values = "'" . implode("', '", $row) . "'";
+                    $stmt = $this->db->prepare("INSERT INTO $table ($placeholders) VALUES ($values)");
                     $stmt->execute();
                     $countRecords++;
                 }
@@ -97,12 +115,24 @@ class DB
     }
 
     /**
+     * @param string $table
+     * @return array
+     */
+    public function getIdAndNameEmployees(): array
+    {
+        $stmt = $this->db->prepare("SELECT e.employee_id, e.name FROM employees e");
+        $stmt->execute();
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $data;
+    }
+
+    /**
      * @param string $nameEmployee
      * @return array
      */
     public function get(string $nameEmployee): array
     {
-        $stmt = $this->db->prepare("SELECT * FROM timesheet WHERE employee='$nameEmployee'");
+        $stmt = $this->db->prepare("SELECT t.* FROM employees e LEFT JOIN timesheet t ON e.employee_id=t.employee_id WHERE name='$nameEmployee'");
         $stmt->execute();
         $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return $data;
@@ -136,7 +166,7 @@ class DB
      */
     public function top5costTasks(): array
     {
-        $stmt = $this->db->prepare("SELECT (EXTRACT(hour FROM (t.end_time - t.start_time))) * p.hourly_rate AS total_cost, t.task AS title FROM timesheet t LEFT JOIN employees e ON (t.employee=e.name) LEFT JOIN positions p ON (e.position=p.name) ORDER BY ((EXTRACT(hour FROM (t.end_time - t.start_time))) * p.hourly_rate) DESC LIMIT 5;");
+        $stmt = $this->db->prepare("SELECT (EXTRACT(hour FROM (t.end_time - t.start_time))) * p.hourly_rate AS total_cost, t.task AS title FROM timesheet t LEFT JOIN employees e ON (t.employee_id=e.employee_id) LEFT JOIN positions p ON (e.position_id=p.position_id) ORDER BY ((EXTRACT(hour FROM (t.end_time - t.start_time))) * p.hourly_rate) DESC LIMIT 5;");
         $stmt->execute();
         $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return $data;
@@ -144,7 +174,7 @@ class DB
 
     public function top5employees(): array
     {
-        $stmt = $this->db->prepare("SELECT SUM(EXTRACT(hour FROM (t.end_time - t.start_time))) AS total_hours, t.employee AS name FROM timesheet t GROUP BY t.employee ORDER BY SUM(EXTRACT(hour FROM (t.end_time - t.start_time))) DESC LIMIT 5;");
+        $stmt = $this->db->prepare("SELECT SUM(EXTRACT(hour FROM (t.end_time - t.start_time))) AS total_hours, e.name FROM timesheet t LEFT JOIN employees e ON t.employee_id=e.employee_id GROUP BY e.name ORDER BY SUM(EXTRACT(hour FROM (t.end_time - t.start_time))) DESC LIMIT 5;");
         $stmt->execute();
         $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return $data;
@@ -153,7 +183,7 @@ class DB
 
 $host = '0.0.0.0';
 $port = '5432';
-$dbname = 'balance';
+$dbname = 'test_db';
 $user = 'root';
 $password = 'pass';
 
@@ -186,7 +216,7 @@ try {
     function display($timesheetsAboutEmployee)
     {
         $sep = "\t\t";
-        $header = array("id", "employee", "task", "start_time", "end_time");
+        $header = array("id", "employee_id", "task", "start_time", "end_time");
         $border = "+-----------+-------------+--------------------+------------------------------+------------------------------+\n";
         $header = implode($sep, $header);
         $header = $border . $header . "\n" . $border;
@@ -198,7 +228,8 @@ try {
         print_r($header . $timesheetsAboutEmployee);
     }
 
-    function generateReport($db, $reportType) {
+    function generateReport($db, $reportType)
+    {
         $reportFunctionMapping = [
             'top5longTasks' => 'top5longTasks',
             'top5costTasks' => 'top5costTasks',
